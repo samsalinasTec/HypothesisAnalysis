@@ -1,0 +1,1 @@
+SELECT * FROM `sorteostec-ml.ml_siteconversion.condicion_promocion`

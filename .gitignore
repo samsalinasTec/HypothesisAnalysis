@@ -1,0 +1,56 @@
+# === Archivos de datos grandes ===
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.zip
+*.gz
+
+# === Archivos de notebooks ===
+*.ipynb
+**/.ipynb_checkpoints/
+
+# === Logs ===
+SQLTablasLog.log
+*.log
+
+# === Cachés de Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+
+# === Entornos virtuales ===
+.venv/
+venv/
+env/
+ENV/
+
+# === Archivos temporales del sistema ===
+.DS_Store
+Thumbs.db
+
+# === Configuración personal / IDE ===
+.vscode/
+.idea/
+*.code-workspace
+
+# === Archivos de build / distribuciones ===
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# === Archivos de Streamlit / Dash (si usas) ===
+.streamlit/
+
+# === Archivos de credenciales locales (⚠️ cuidado con esto) ===
+.env
+.env.*
+*.pem
+*.key
+Data/credentials/
+logs/
+*.out
+*.log
