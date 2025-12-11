@@ -400,10 +400,9 @@ def main():
             )
 
             KPI_sesiones_resumen = (
-                (sesiones_con_login_sin_purchase_con_patron_bc_monto_begin_checkout /
-                 sesiones_con_login_monto_begin_checkout
-                 if sesiones_con_login_monto_begin_checkout > 0 else 0.0)
-                * sesiones_sin_login_sin_purchase_con_patron_bc_monto_begin_checkout
+                sesiones_sin_login_sin_purchase_con_patron_bc_monto_begin_checkout-((sesiones_con_login_sin_purchase_con_patron_bc_monto_begin_checkout /
+                 sesiones_con_login_monto_begin_checkout)
+                * sesiones_sin_login_sin_purchase_con_patron_bc_monto_begin_checkout)
             )
 
             logger.info("=== RESUMEN SESIONES / KPIs ===")
