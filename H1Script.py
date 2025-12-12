@@ -14,11 +14,11 @@ import numpy as np
 # Parámetros generales
 # ----------------------------
 PROJECT_ID = "sorteostec-ml"
-DATE_START = "2024-12-01"
-DATE_END   = "2025-11-30"
+DATE_START = "2024-10-01" # 
+DATE_END   = "2025-12-10"
 
 # Tabla base GA4 (canónica por PRODUCTO, no por boleto)
-TABLE_B = "sorteostec-ml.h1.intentos_producto_canonico_web_20241201_20251130"
+TABLE_B = "sorteostec-ml.h1.intentos_producto_canonico_web_20241001_20251210"
 
 # Solo se usa en script de VM. Aquí no se deposita ninguna tabla en ningun lado fuera de local.
 # Solo son pruebas locales.
@@ -518,11 +518,16 @@ def main():
             query_procesamiento_patrones = load_sql("./Data/queries/procesamiento_patrones.sql")
             query_patrones_funnel_completo = load_sql("./Data/queries/patrones_funnel_completo.sql")
 
-        # execute_ddl(query_base_patrones) y execute_ddl(query_complemento_funnel)
-        # se quedan como llamadas manuales según necesidad (costosas en BQ).
+
 
         # Ejecutar queries soporte
         with _time_block("Ejecución de queries BigQuery (GA4 + soporte)"):
+            logger.info("Ejecutando query_base_patrones...")
+            execute_ddl(query_base_patrones)  # comentar cuando se ejecute al menos una vez
+            logger.info("Ejecutando query_complemento_funnel...") 
+            execute_ddl(query_complemento_funnel) # comentar cuando se ejecute al menos una vez
+        # se quedan como llamadas manuales según necesidad (costosas en BQ).
+
             logger.info("Ejecutando query_ga4_events...")
             df_ga4_events = execute_query_to_df(query_ga4_events)
             logger.info(_df_stats(df_ga4_events, "df_ga4_events"))

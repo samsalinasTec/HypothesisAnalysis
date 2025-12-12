@@ -1,4 +1,4 @@
-CREATE OR REPLACE TABLE `sorteostec-ml.h1.patrones_y_funnel_web_20241201_20251130` 
+CREATE OR REPLACE TABLE `sorteostec-ml.h1.patrones_y_funnel_web_20241001_20251210` 
 PARTITION BY attempt_date
 CLUSTER BY ITEM, STATUS, login_bucket_bc AS
 
@@ -27,9 +27,9 @@ WITH t AS (
     PROMOS_PURCHASE_COMPLETAS, PROMOS_PURCHASE_INCOMPLETAS, PROMOS_PURCHASE_TODAS,
     PATRON_ADD_CART, PATRON_BEGIN_CHECKOUT, PATRON_PURCHASE,
     TIENE_PATRON_COMPLETO, TIENE_PATRON_INCOMPLETO
-  FROM `sorteostec-ml.h1.ga4_patrones_promociones_20241201_20251130`
+  FROM `sorteostec-ml.h1.ga4_patrones_promociones_20241001_20251210`
   WHERE PARSE_DATE('%d/%m/%Y', SUBSTR(DATETIME,1,10))
-        BETWEEN DATE '2024-12-01' AND DATE '2025-11-30'
+        BETWEEN DATE '2024-10-01' AND DATE '2025-12-10'
 ),
 s AS (
   SELECT
@@ -41,8 +41,8 @@ s AS (
     sign_up_time_mx,
     event_count, has_purchase, has_sign_up,
     discount_seen_after_login, categoria_login
-  FROM `sorteostec-ml.h1.sesiones_funnel_lineal_web_20241201_20251130`
-  WHERE session_date BETWEEN DATE '2024-12-01' AND DATE '2025-11-30'
+  FROM `sorteostec-ml.h1.sesiones_funnel_lineal_web_20241001_20251210`
+  WHERE session_date BETWEEN DATE '2024-10-01' AND DATE '2025-12-10'
 )
 SELECT
   -- claves intento–producto

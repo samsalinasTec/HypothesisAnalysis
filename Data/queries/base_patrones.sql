@@ -1,11 +1,11 @@
-CREATE OR REPLACE TABLE `sorteostec-ml.h1.intentos_producto_canonico_web_20241201_20251130`
+CREATE OR REPLACE TABLE `sorteostec-ml.h1.intentos_producto_canonico_web_20241001_20251210`
 PARTITION BY attempt_date
 CLUSTER BY ITEM, STATUS AS
 WITH
   e AS (
     SELECT *
     FROM `sorteostec-analytics360.analytics_277858205.events_intraday_*`
-    WHERE _TABLE_SUFFIX BETWEEN '20241201' AND '20251130'
+    WHERE _TABLE_SUFFIX BETWEEN '20241001' AND '20251210'
       AND platform = 'WEB'
       AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key='ga_session_id')
       AND event_name IN ('add_to_cart','begin_checkout','purchase')
