@@ -2,15 +2,53 @@ CREATE OR REPLACE TABLE `sorteostec-ml.h1.intentos_producto_canonico_web_2024100
 PARTITION BY attempt_date
 CLUSTER BY ITEM, STATUS AS
 WITH
-  e AS (
-    SELECT *
-    FROM `sorteostec-analytics360.analytics_277858205.events_intraday_*`
-    WHERE _TABLE_SUFFIX BETWEEN '20241001' AND '20251210'
-      AND platform = 'WEB'
-      AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key='ga_session_id')
-      AND event_name IN ('add_to_cart','begin_checkout','purchase')
-  ),
+events_days AS (
+  SELECT DISTINCT _TABLE_SUFFIX AS ds
+  FROM `sorteostec-analytics360.analytics_277858205.events_*`
+  WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^\d{8}$')
+    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251210' # CAMBIAR FECHA
+),
 
+e AS (
+  -- diario (preferido)
+  SELECT
+    user_pseudo_id,
+    event_params,
+    event_name,
+    event_timestamp,
+    ecommerce,
+    event_bundle_sequence_id,
+    event_server_timestamp_offset,
+    items,
+    platform
+  FROM `sorteostec-analytics360.analytics_277858205.events_*`
+  WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^\d{8}$')
+    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251210' # CAMBIAR FECHA
+    AND platform = 'WEB'
+    AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key='ga_session_id')
+    AND event_name IN ('add_to_cart','begin_checkout','purchase')
+
+  UNION ALL
+
+  -- intraday solo si falta el día en diario
+  SELECT
+    user_pseudo_id,
+    event_params,
+    event_name,
+    event_timestamp,
+    ecommerce,
+    event_bundle_sequence_id,
+    event_server_timestamp_offset,
+    items,
+    platform
+  FROM `sorteostec-analytics360.analytics_277858205.events_intraday_*` i
+  WHERE i._TABLE_SUFFIX BETWEEN '20241001' AND '20251210' # CAMBIAR FECHA
+    AND NOT EXISTS (SELECT 1 FROM events_days d WHERE d.ds = i._TABLE_SUFFIX)
+    AND i.platform = 'WEB'
+    AND EXISTS (SELECT 1 FROM UNNEST(i.event_params) WHERE key='ga_session_id')
+    AND i.event_name IN ('add_to_cart','begin_checkout','purchase')
+),
+ 
   base_raw AS (
     SELECT
       e.user_pseudo_id,
@@ -29,7 +67,7 @@ WITH
     FROM e
     LEFT JOIN UNNEST(e.items) AS i
   ),
-
+ 
   base_dedup AS (
     SELECT * EXCEPT(rn) FROM (
       SELECT b.*,
@@ -41,7 +79,7 @@ WITH
     )
     WHERE rn = 1
   ),
-
+ 
   -- 🔧 conservamos offset/bundle para poder ordenar "el último" evento con precisión
   items_flat AS (
     SELECT
@@ -57,7 +95,7 @@ WITH
       item_qty
     FROM base_dedup
   ),
-
+ 
   seq AS (
     SELECT
       *,
@@ -69,14 +107,14 @@ WITH
       ) AS purchase_cume
     FROM items_flat
   ),
-
+ 
   bucketed AS (
     SELECT
       *,
       purchase_cume + IF(is_purchase=1,0,1) AS attempt_id
     FROM seq
   ),
-
+ 
   -- ✅ qty de BC por evento–producto (suma de boletos del producto dentro del evento)
   bc_per_event AS (
     SELECT
@@ -89,7 +127,7 @@ WITH
     WHERE event_name = 'begin_checkout'
     GROUP BY 1,2,3,4,5,6,7
   ),
-
+ 
   -- ✅ último begin_checkout del intento–producto (orden determinístico)
   bc_last AS (
     SELECT
@@ -100,7 +138,7 @@ WITH
     FROM bc_per_event
     GROUP BY 1,2,3,4
   ),
-
+ 
   -- Agregado por intento x producto
   agg AS (
     SELECT
@@ -117,25 +155,25 @@ WITH
     FROM bucketed
     GROUP BY 1,2,3,4
   )
-
+ 
 SELECT
   user_pseudo_id             AS USER,
   session_id                 AS SESION,
   product_key                AS ITEM,
   attempt_id                 AS INTENTO,
-
+ 
   -- Tiempo representativo
   COALESCE(purchase_dt_mx, last_dt_mx) AS attempt_dt_mx,
   FORMAT_DATETIME('%d/%m/%Y %H:%M:%S', COALESCE(purchase_dt_mx, last_dt_mx)) AS DATETIME,
   DATE(COALESCE(purchase_dt_mx, last_dt_mx)) AS attempt_date,
-
+ 
   -- Estatus y cantidades (boletos, NO conteo de eventos)
   has_purchase_int           AS HAS_PURCHASE_INT,
   CASE WHEN has_purchase_int=1 THEN 'PURCHASED' ELSE 'NO_PURCHASE' END AS STATUS,
   qty_add_to_cart,
   COALESCE(bc.qty_begin_checkout, 0)   AS qty_begin_checkout,   -- último BC del intento–producto (suma por evento)
   qty_purchase,
-
+ 
   transaction_id
 FROM agg
 LEFT JOIN bc_last bc

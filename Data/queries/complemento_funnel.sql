@@ -2,13 +2,59 @@ CREATE OR REPLACE TABLE `sorteostec-ml.h1.sesiones_funnel_lineal_web_20241001_20
 PARTITION BY session_date
 CLUSTER BY user_pseudo_id, session_id
 AS
-WITH e AS (
-  SELECT *
-  FROM `sorteostec-analytics360.analytics_277858205.events_intraday_*`
-  WHERE _TABLE_SUFFIX BETWEEN '20241001' AND '20251210'
+WITH
+-- 0) Días que YA tienen tabla diaria events_YYYYMMDD (para NO duplicar con intraday)
+events_days AS (
+  SELECT
+    REGEXP_EXTRACT(table_name, r'^events_(\d{8})$') AS ds
+  FROM `sorteostec-analytics360.analytics_277858205.INFORMATION_SCHEMA.TABLES`
+  WHERE REGEXP_CONTAINS(table_name, r'^events_\d{8}$')
+    AND REGEXP_EXTRACT(table_name, r'^events_(\d{8})$') BETWEEN '20241001' AND '20251210'
+),
+ 
+-- 1) Fuente unificada (events + intraday sin duplicar por día)
+e AS (
+  -- diario (preferido)
+  SELECT
+    user_pseudo_id,
+    event_params,
+    event_name,
+    event_timestamp,
+    event_bundle_sequence_id,
+    event_server_timestamp_offset,
+    items,
+    platform
+  FROM `sorteostec-analytics360.analytics_277858205.events_*`
+  WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^\d{8}$')
+    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251210'
     AND platform = 'WEB'
     AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key = 'ga_session_id')
     AND event_name IN (
+      'login','logout','view_item_list','select_item',
+      'add_to_cart','remove_from_cart','begin_checkout','purchase','sign_up'
+    )
+ 
+  UNION ALL
+ 
+  -- intraday solo si falta el día en diario
+  SELECT
+    i.user_pseudo_id,
+    i.event_params,
+    i.event_name,
+    i.event_timestamp,
+    i.event_bundle_sequence_id,
+    i.event_server_timestamp_offset,
+    i.items,
+    i.platform
+  FROM `sorteostec-analytics360.analytics_277858205.events_intraday_*` i
+  WHERE i._TABLE_SUFFIX BETWEEN '20241001' AND '20251210'
+    AND NOT EXISTS (
+      SELECT 1 FROM events_days d
+      WHERE d.ds = i._TABLE_SUFFIX
+    )
+    AND i.platform = 'WEB'
+    AND EXISTS (SELECT 1 FROM UNNEST(i.event_params) WHERE key = 'ga_session_id')
+    AND i.event_name IN (
       'login','logout','view_item_list','select_item',
       'add_to_cart','remove_from_cart','begin_checkout','purchase','sign_up'
     )
@@ -44,15 +90,15 @@ marcadores AS (
   SELECT
     user_pseudo_id,
     session_id,
-
+ 
     MIN(event_ts_utc) AS session_start_utc,
     MAX(event_ts_utc) AS session_end_utc,
     DATETIME(MIN(event_ts_utc), "America/Mexico_City") AS session_start_mx,
     DATETIME(MAX(event_ts_utc), "America/Mexico_City") AS session_end_mx,
-
+ 
     COUNT(*) AS event_count,
     COUNTIF(event_name='purchase') AS purchase_events,
-
+ 
     MIN(IF(event_name='login',            event_ts_utc, NULL)) AS login_time_utc,
     MIN(IF(event_name='logout',           event_ts_utc, NULL)) AS logout_time_utc,
     MIN(IF(event_name='view_item_list',   event_ts_utc, NULL)) AS view_item_list_time_utc,
@@ -80,7 +126,7 @@ discount_after_login AS (
     END AS discount_seen_after_login
   FROM marcadores m
 ),
-
+ 
 -- Ordenamos dinámicamente los hitos de funnel presentes en la sesión
 ordered AS (
   SELECT
@@ -101,14 +147,14 @@ ordered AS (
   LEFT JOIN discount_after_login da
     ON da.user_pseudo_id = m.user_pseudo_id AND da.session_id = m.session_id
 )
-
+ 
 SELECT
   o.user_pseudo_id,
   o.session_id,
-
+ 
   o.session_start_mx,
   o.session_end_mx,
-
+ 
   DATETIME(o.login_time_utc,          "America/Mexico_City") AS login_time_mx,
   DATETIME(o.logout_time_utc,         "America/Mexico_City") AS logout_time_mx,
   DATETIME(o.view_item_list_time_utc, "America/Mexico_City") AS view_item_list_time_mx,
@@ -117,13 +163,13 @@ SELECT
   DATETIME(o.begin_checkout_time_utc, "America/Mexico_City") AS begin_checkout_time_mx,
   DATETIME(o.purchase_time_utc,       "America/Mexico_City") AS purchase_time_mx,
   DATETIME(o.sign_up_time_utc,        "America/Mexico_City") AS sign_up_time_mx,
-
+ 
   DATE(o.session_start_mx) AS session_date,  -- partición
   o.event_count,
   (o.purchase_events > 0) AS has_purchase,
   (o.sign_up_time_utc IS NOT NULL) AS has_sign_up,
   o.discount_seen_after_login,
-
+ 
   -- Comparativos por etapa (consistentes)
   CASE
     WHEN o.login_time_utc IS NULL THEN 'SIN LOGIN'
@@ -132,7 +178,7 @@ SELECT
     WHEN o.login_time_utc >  o.view_item_list_time_utc THEN 'DESPUÉS'
     ELSE 'EMPATE'
   END AS login_vs_view_item_list,
-
+ 
   CASE
     WHEN o.login_time_utc IS NULL THEN 'SIN LOGIN'
     WHEN o.select_item_time_utc IS NULL THEN 'SIN EVENTO'
@@ -140,7 +186,7 @@ SELECT
     WHEN o.login_time_utc >  o.select_item_time_utc THEN 'DESPUÉS'
     ELSE 'EMPATE'
   END AS login_vs_select_item,
-
+ 
   CASE
     WHEN o.login_time_utc IS NULL THEN 'SIN LOGIN'
     WHEN o.add_to_cart_time_utc IS NULL THEN 'SIN EVENTO'
@@ -148,7 +194,7 @@ SELECT
     WHEN o.login_time_utc >  o.add_to_cart_time_utc THEN 'DESPUÉS'
     ELSE 'EMPATE'
   END AS login_vs_add_to_cart,
-
+ 
   CASE
     WHEN o.login_time_utc IS NULL THEN 'SIN LOGIN'
     WHEN o.begin_checkout_time_utc IS NULL THEN 'SIN EVENTO'
@@ -156,7 +202,7 @@ SELECT
     WHEN o.login_time_utc >  o.begin_checkout_time_utc THEN 'DESPUÉS'
     ELSE 'EMPATE'
   END AS login_vs_begin_checkout,
-
+ 
   -- Bucket único, sin “sin clasificar”
   CASE
     WHEN o.login_time_utc IS NULL THEN 'SIN LOGIN EN SESIÓN'
@@ -178,5 +224,3 @@ SELECT
     ELSE CONCAT('LOGIN DESPUÉS DE ', o.steps[SAFE_OFFSET(3)].step)
   END AS categoria_login
 FROM ordered o;
-
-
