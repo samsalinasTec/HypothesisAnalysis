@@ -26,7 +26,7 @@ e AS (
     AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251210' # CAMBIAR FECHA
     AND platform = 'WEB'
     AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key='ga_session_id')
-    AND event_name IN ('add_to_cart','begin_checkout','purchase')
+    AND event_name IN ('add_to_cart','begin_checkout','purhttps://servicios.sorteostec.org/Reporteador/Sitio/v1/index.htmlchase')
 
   UNION ALL
 
@@ -49,11 +49,12 @@ e AS (
     AND i.event_name IN ('add_to_cart','begin_checkout','purchase')
 ),
  
-  base_raw AS (
+base_raw AS (
     SELECT
       e.user_pseudo_id,
       (SELECT value.int_value FROM UNNEST(e.event_params) WHERE key='ga_session_id' LIMIT 1) AS session_id,
       e.event_name,
+      e.event_timestamp,
       TIMESTAMP_MICROS(e.event_timestamp) AS event_ts_utc,
       DATETIME(TIMESTAMP_MICROS(e.event_timestamp), "America/Mexico_City") AS event_dt_mx,
       COALESCE(
@@ -63,23 +64,25 @@ e AS (
       e.event_bundle_sequence_id,
       e.event_server_timestamp_offset,
       i.item_name,                                        -- producto/edición
-      COALESCE(SAFE_CAST(i.quantity AS INT64), 1) AS item_qty
+      #COALESCE(SAFE_CAST(i.quantity AS INT64), 1) AS item_qty
+      SUM(COALESCE(SAFE_CAST(i.quantity AS INT64), 1)) AS item_qty # Sumar los boletos del mismo sorteo antes de deduplicar
     FROM e
     LEFT JOIN UNNEST(e.items) AS i
+    GROUP BY 1,2,3,4,5,6,7,8,9,10 # Agrupar por todo menos item_qty
   ),
- 
-  base_dedup AS (
+
+    base_dedup AS (
     SELECT * EXCEPT(rn) FROM (
       SELECT b.*,
              ROW_NUMBER() OVER (
-               PARTITION BY user_pseudo_id, session_id, event_name, event_ts_utc, item_name
+               #PARTITION BY user_pseudo_id, session_id, event_name, event_ts_utc, item_name
+               PARTITION BY user_pseudo_id, session_id, event_name, event_timestamp, item_name # event_timestamp es un INT64 ajustado al microseg que no redondea
                ORDER BY event_server_timestamp_offset DESC, event_bundle_sequence_id DESC
              ) AS rn
       FROM base_raw b
     )
     WHERE rn = 1
-  ),
- 
+  ), 
   -- 🔧 conservamos offset/bundle para poder ordenar "el último" evento con precisión
   items_flat AS (
     SELECT
@@ -177,4 +180,5 @@ SELECT
   transaction_id
 FROM agg
 LEFT JOIN bc_last bc
+
   USING (user_pseudo_id, session_id, product_key, attempt_id);
