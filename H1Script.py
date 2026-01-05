@@ -15,10 +15,10 @@ import numpy as np
 # ----------------------------
 PROJECT_ID = "sorteostec-ml"
 DATE_START = "2024-10-01" # 
-DATE_END   = "2025-12-10"
+DATE_END   = "2025-12-31"
 
 # Tabla base GA4 (canónica por PRODUCTO, no por boleto)
-TABLE_B = "sorteostec-ml.h1.intentos_producto_canonico_web_20241001_20251210"
+TABLE_B = "sorteostec-ml.h1.intentos_producto_canonico_web_20241001_20251231"
 
 # Solo se usa en script de VM. Aquí no se deposita ninguna tabla en ningun lado fuera de local.
 # Solo son pruebas locales.
@@ -1118,3 +1118,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
