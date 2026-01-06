@@ -558,26 +558,52 @@ def main():
 
         # Preparar sorteo + GA4 base + montos
         with _time_block("Preparación df_sorteo + df_ga4_events_base + montos"):
+            # Inician cambios JQL - 6Ene26
+            
+            # 1. Preparar catálogo de sorteos
             df_sorteo['numero_sorteo_int'] = df_sorteo['numero_sorteo'].fillna(0).astype(int).astype(str)
             df_sorteo['item_completo'] = df_sorteo['desc_sorteo'] + ' ' + df_sorteo['numero_sorteo_int']
+            
+            # Convertir fecha_celebracion a datetime
+            df_sorteo['fecha_celebracion'] = pd.to_datetime(df_sorteo['fecha_celebracion'])
 
+            # Inicializar copias base para mantener integridad de datos originales
             df_ga4_events_base = df_ga4_events.copy()
-            df_condiciones_base = df_condiciones.copy()
+            df_condiciones_base = df_condiciones.copy() 
 
+            # 2. Merge con sorteo incluyendo la fecha de celebración
             df_ga4_events_base = df_ga4_events_base.merge(
-                df_sorteo[['item_completo', 'clave_edicion_producto', 'precio_unitario']],
+                df_sorteo[['item_completo', 'clave_edicion_producto', 'precio_unitario', 'fecha_celebracion']],
                 left_on='ITEM',
                 right_on='item_completo',
                 how='left'
             )
 
+            # 3. Calcular dias_para_sorteo
+            # Convertimos la fecha del evento a datetime para la operación matemática
+            event_dt = pd.to_datetime(df_ga4_events_base['DATETIME'], format='%d/%m/%Y %H:%M:%S')
+            
+            # Calculamos la diferencia en días enteros
+            df_ga4_events_base['dias_para_sorteo'] = (
+                df_ga4_events_base['fecha_celebracion'] - event_dt
+            ).dt.days
+
+            # 4. Procesamiento de montos y tipos de datos
             df_ga4_events_base['clave_edicion_producto'] = pd.to_numeric(
                 df_ga4_events_base['clave_edicion_producto'], errors='coerce'
             ).astype('Int64')
 
+            # Cálculo de montos potenciales (Price * Qty added to cart)
             df_ga4_events_base['MONTO_ADD_TO_CART'] = (
                 df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_ADD_TO_CART']
             )
+            
+            # Aseguramos que los montos nulos se manejen como 0 para evitar errores en sumatorias
+            df_ga4_events_base['MONTO_ADD_TO_CART'] = df_ga4_events_base['MONTO_ADD_TO_CART'].fillna(0)
+            
+            # Fin de cambios JQL - 6Ene26
+
+
             df_ga4_events_base['MONTO_BEGIN_CHECKOUT'] = (
                 df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_BEGIN_CHECKOUT']
             )

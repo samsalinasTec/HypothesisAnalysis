@@ -6,7 +6,7 @@ events_days AS (
   SELECT DISTINCT _TABLE_SUFFIX AS ds
   FROM `sorteostec-analytics360.analytics_277858205.events_*`
   WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^\d{8}$')
-    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251231' # CAMBIAR FECHA
+    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251231' -- CAMBIAR FECHA
 ),
 
 e AS (
@@ -20,10 +20,18 @@ e AS (
     event_bundle_sequence_id,
     event_server_timestamp_offset,
     items,
-    platform
+    platform,
+    -- Dimensiones añadidas. Cambios JQL 6Ene26
+    device.category AS device_category,
+    geo.country AS geo_country,
+    geo.region AS geo_region,
+    geo.city AS geo_city,
+    traffic_source.source AS traffic_source,
+    traffic_source.medium AS traffic_medium
+    
   FROM `sorteostec-analytics360.analytics_277858205.events_*`
   WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^\d{8}$')
-    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251231' # CAMBIAR FECHA
+    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251231' -- CAMBIAR FECHA
     AND platform = 'WEB'
     AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key='ga_session_id')
     AND event_name IN ('add_to_cart','begin_checkout','purchase')
@@ -40,9 +48,17 @@ e AS (
     event_bundle_sequence_id,
     event_server_timestamp_offset,
     items,
-    platform
+    platform,
+    -- Dimensiones añadidas. Cambios JQL 6Ene26
+    i.device.category,
+    i.geo.country,
+    i.geo.region,
+    i.geo.city,
+    i.traffic_source.source,
+    i.traffic_source.medium
+
   FROM `sorteostec-analytics360.analytics_277858205.events_intraday_*` i
-  WHERE i._TABLE_SUFFIX BETWEEN '20241001' AND '20251231' # CAMBIAR FECHA
+  WHERE i._TABLE_SUFFIX BETWEEN '20241001' AND '20251231' -- CAMBIAR FECHA
     AND NOT EXISTS (SELECT 1 FROM events_days d WHERE d.ds = i._TABLE_SUFFIX)
     AND i.platform = 'WEB'
     AND EXISTS (SELECT 1 FROM UNNEST(i.event_params) WHERE key='ga_session_id')
@@ -64,19 +80,28 @@ base_raw AS (
       e.event_bundle_sequence_id,
       e.event_server_timestamp_offset,
       i.item_name,                                        -- producto/edición
-      #COALESCE(SAFE_CAST(i.quantity AS INT64), 1) AS item_qty
-      SUM(COALESCE(SAFE_CAST(i.quantity AS INT64), 1)) AS item_qty # Sumar los boletos del mismo sorteo antes de deduplicar
+
+      -- Preservar dimensiones con ANY_VALUE. Cambios JQL 6Ene26
+      ANY_VALUE(e.device_category) AS device_category,
+      ANY_VALUE(e.geo_country) AS geo_country,
+      ANY_VALUE(e.geo_region) AS geo_region,
+      ANY_VALUE(e.geo_city) AS geo_city,
+      ANY_VALUE(e.traffic_source) AS traffic_source,
+      ANY_VALUE(e.traffic_medium) AS traffic_medium,
+
+      -- COALESCE(SAFE_CAST(i.quantity AS INT64), 1) AS item_qty
+      SUM(COALESCE(SAFE_CAST(i.quantity AS INT64), 1)) AS item_qty -- Sumar los boletos del mismo sorteo antes de deduplicar
     FROM e
     LEFT JOIN UNNEST(e.items) AS i
-    GROUP BY 1,2,3,4,5,6,7,8,9,10 # Agrupar por todo menos item_qty
+    GROUP BY 1,2,3,4,5,6,7,8,9,10 -- Agrupar por todo menos item_qty
   ),
 
     base_dedup AS (
     SELECT * EXCEPT(rn) FROM (
       SELECT b.*,
              ROW_NUMBER() OVER (
-               #PARTITION BY user_pseudo_id, session_id, event_name, event_ts_utc, item_name
-               PARTITION BY user_pseudo_id, session_id, event_name, event_timestamp, item_name # event_timestamp es un INT64 ajustado al microseg que no redondea
+               -- PARTITION BY user_pseudo_id, session_id, event_name, event_ts_utc, item_name
+               PARTITION BY user_pseudo_id, session_id, event_name, event_timestamp, item_name -- event_timestamp es un INT64 ajustado al microseg que no redondea
                ORDER BY event_server_timestamp_offset DESC, event_bundle_sequence_id DESC
              ) AS rn
       FROM base_raw b
@@ -84,18 +109,12 @@ base_raw AS (
     WHERE rn = 1
   ), 
   -- 🔧 conservamos offset/bundle para poder ordenar "el último" evento con precisión
+  
+  -- Mantener la nuevas columnas. Cambios JQL 6Ene26
   items_flat AS (
     SELECT
-      user_pseudo_id,
-      session_id,
-      event_name,
-      event_ts_utc,
-      event_dt_mx,
-      transaction_id,
-      event_bundle_sequence_id,
-      event_server_timestamp_offset,
-      COALESCE(item_name, '__NO_ITEM__') AS product_key,
-      item_qty
+      *,
+      COALESCE(item_name, '__NO_ITEM__') AS product_key
     FROM base_dedup
   ),
  
@@ -149,6 +168,14 @@ base_raw AS (
       session_id,
       product_key,
       attempt_id,
+      -- Cambios JQL 6Ene26
+      ANY_VALUE(device_category) AS device_category,
+      ANY_VALUE(geo_country) AS geo_country,
+      ANY_VALUE(geo_region) AS geo_region,
+      ANY_VALUE(geo_city) AS geo_city,
+      ANY_VALUE(traffic_source) AS traffic_source,
+      ANY_VALUE(traffic_medium) AS traffic_medium,
+
       MIN(IF(event_name='purchase', event_dt_mx, NULL)) AS purchase_dt_mx,
       MAX(event_dt_mx)                                  AS last_dt_mx,
       MAX(IF(event_name='purchase',1,0))                AS has_purchase_int,
@@ -173,6 +200,15 @@ SELECT
   -- Estatus y cantidades (boletos, NO conteo de eventos)
   has_purchase_int           AS HAS_PURCHASE_INT,
   CASE WHEN has_purchase_int=1 THEN 'PURCHASED' ELSE 'NO_PURCHASE' END AS STATUS,
+
+    -- Dimensiones añadidas al SELECT final. Cambios JQL 6Ene25
+  device_category,
+  geo_country,
+  geo_region,
+  geo_city,
+  traffic_source,
+  traffic_medium,
+
   qty_add_to_cart,
   COALESCE(bc.qty_begin_checkout, 0)   AS qty_begin_checkout,   -- último BC del intento–producto (suma por evento)
   qty_purchase,

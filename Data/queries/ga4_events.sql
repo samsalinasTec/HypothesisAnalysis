@@ -4,6 +4,15 @@ SELECT
   DATETIME,                      -- '%d/%m/%Y %H:%M:%S' (horario MX)
   ITEM,
   INTENTO,
+
+    -- Dimensiones de Usuario y Contexto. Cambios JQL 6Ene26
+  device_category,
+  geo_country,
+  geo_region,
+  geo_city,
+  traffic_source,
+  traffic_medium,
+
   CASE WHEN HAS_PURCHASE_INT=1 THEN 'PURCHASED' ELSE 'NO_PURCHASE' END AS STATUS,
   qty_add_to_cart      AS CANTIDAD_ADD_TO_CART,
   qty_begin_checkout   AS CANTIDAD_BEGIN_CHECKOUT,
