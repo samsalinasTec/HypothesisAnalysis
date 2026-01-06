@@ -26,7 +26,7 @@ e AS (
     AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251231' # CAMBIAR FECHA
     AND platform = 'WEB'
     AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key='ga_session_id')
-    AND event_name IN ('add_to_cart','begin_checkout','purhttps://servicios.sorteostec.org/Reporteador/Sitio/v1/index.htmlchase')
+    AND event_name IN ('add_to_cart','begin_checkout','purchase')
 
   UNION ALL
 

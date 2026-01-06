@@ -765,7 +765,7 @@ def main():
         with _time_block("Carga df_ga4_events_final a BigQuery (BQLoad)"):
             loader = BQLoad(credentials_path=CREDENTIALS_PATH_ML)
             PROJECT_DATASET = "sorteostec-ml.h1"
-            TABLE_NAME = "ga4_patrones_promociones_20241001_20251210"
+            TABLE_NAME = "ga4_patrones_promociones_20241001_20251231"
             table = f"{PROJECT_DATASET}.{TABLE_NAME}"
 
             logger.info("Eliminando tabla destino (si existe): %s", table)

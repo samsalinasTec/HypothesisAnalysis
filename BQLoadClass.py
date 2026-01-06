@@ -106,6 +106,8 @@ class BQLoad:
         )
 
     def delete_tables(self, tables: List[str]) -> None:
+        if isinstance(tables, str):
+            tables = [tables]
         for table in tables:
             try:
                 self.client.delete_table(table)
