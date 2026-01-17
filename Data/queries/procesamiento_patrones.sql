@@ -17,6 +17,19 @@ WITH t AS (
     SAFE_CAST(CANTIDAD_PURCHASE       AS INT64) AS qty_purchase,
     TRANSACTION_ID,
 
+    -- Cambios JQL 16Ene26. Arrastrar nuevos campos creados en ga4_patrones_promociones_20241001_20251231
+    -- y crear traffic_density_score y products_in_session_count
+    device_category,
+    geo_country,
+    geo_region,
+    geo_city,
+    traffic_source,
+    traffic_medium,
+    dias_para_sorteo,	
+    COUNT(*) OVER(PARTITION BY TIMESTAMP_TRUNC(PARSE_DATETIME('%d/%m/%Y %H:%M:%S', DATETIME), MINUTE)) AS traffic_density_score,
+    COUNT(DISTINCT ITEM) OVER(PARTITION BY user_pseudo_id, session_id) AS products_in_session_count,
+    -- Fin de cambios JQL 16Ene26
+
     -- MONTOS desde el script
     MONTO_ADD_TO_CART,
     MONTO_BEGIN_CHECKOUT,
@@ -48,6 +61,18 @@ SELECT
   -- claves intento–producto
   t.user_pseudo_id, t.session_id, t.intento, t.ITEM, t.STATUS,
   t.attempt_dt_mx, t.attempt_date, t.datetime_str, t.TRANSACTION_ID,
+
+  -- Cambios JQL 16Ene26 para arrastrar nuevos campos
+  t.device_category,
+  t.geo_country,
+  t.geo_region,
+  t.geo_city,
+  t.traffic_source,
+  t.traffic_medium,
+  t.dias_para_sorteo,
+  t.traffic_density_score,
+  t.products_in_session_count,
+  -- Fin de cambios JQL 16Ene26
 
   -- cantidades (boletos)
   t.qty_add_to_cart, t.qty_begin_checkout, t.qty_purchase,

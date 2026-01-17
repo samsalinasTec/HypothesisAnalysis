@@ -558,9 +558,9 @@ def main():
 
         # Preparar sorteo + GA4 base + montos
         with _time_block("Preparación df_sorteo + df_ga4_events_base + montos"):
-            # Inician cambios JQL - 6Ene26
+            # Inician cambios JQL - 16Ene26
             
-            # 1. Preparar catálogo de sorteos
+            # Preparar catálogo de sorteos
             df_sorteo['numero_sorteo_int'] = df_sorteo['numero_sorteo'].fillna(0).astype(int).astype(str)
             df_sorteo['item_completo'] = df_sorteo['desc_sorteo'] + ' ' + df_sorteo['numero_sorteo_int']
             
@@ -569,9 +569,24 @@ def main():
 
             # Inicializar copias base para mantener integridad de datos originales
             df_ga4_events_base = df_ga4_events.copy()
-            df_condiciones_base = df_condiciones.copy() 
+            df_condiciones_base = df_condiciones.copy()
 
-            # 2. Merge con sorteo incluyendo la fecha de celebración
+            # Limpiar nombres de item_name
+            dictCambiosNombre = {
+                "LQ": "Sorteo Lo Quiero",
+                "Sorteo Efectivo": "Efectivo"
+                }
+
+            df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(mover_numero_al_final)
+            df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(
+                 lambda x: reemplazar_prefijo(x, dictCambiosNombre)
+                 )
+            df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(limpiar_item)
+
+            df_ga4_events_base.loc[df_ga4_events_base["ITEM"] == "Gana Ya", "ITEM"] = "Gana Ya 5"
+
+
+            # Merge con sorteo incluyendo la fecha de celebración
             df_ga4_events_base = df_ga4_events_base.merge(
                 df_sorteo[['item_completo', 'clave_edicion_producto', 'precio_unitario', 'fecha_celebracion']],
                 left_on='ITEM',
@@ -579,16 +594,15 @@ def main():
                 how='left'
             )
 
-            # 3. Calcular dias_para_sorteo
+            # Calcular dias_para_sorteo
             # Convertimos la fecha del evento a datetime para la operación matemática
             event_dt = pd.to_datetime(df_ga4_events_base['DATETIME'], format='%d/%m/%Y %H:%M:%S')
             
             # Calculamos la diferencia en días enteros
-            df_ga4_events_base['dias_para_sorteo'] = (
-                df_ga4_events_base['fecha_celebracion'] - event_dt
-            ).dt.days
+            df_ga4_events_base['dias_para_sorteo'] = (df_ga4_events_base["fecha_celebracion"].dt.tz_localize(None).dt.normalize() - event_dt.dt.normalize()).dt.days
 
-            # 4. Procesamiento de montos y tipos de datos
+
+            # Procesamiento de montos y tipos de datos
             df_ga4_events_base['clave_edicion_producto'] = pd.to_numeric(
                 df_ga4_events_base['clave_edicion_producto'], errors='coerce'
             ).astype('Int64')
@@ -601,7 +615,7 @@ def main():
             # Aseguramos que los montos nulos se manejen como 0 para evitar errores en sumatorias
             df_ga4_events_base['MONTO_ADD_TO_CART'] = df_ga4_events_base['MONTO_ADD_TO_CART'].fillna(0)
             
-            # Fin de cambios JQL - 6Ene26
+            # Fin de cambios JQL - 16Ene26
 
 
             df_ga4_events_base['MONTO_BEGIN_CHECKOUT'] = (
@@ -797,12 +811,78 @@ def main():
             logger.info("Eliminando tabla destino (si existe): %s", table)
             loader.delete_tables(table)
 
+            # Cambios JQL 16Ene26. Definir esquema
+            schema_patrones = [
+                bigquery.SchemaField("USER", "STRING"),
+                bigquery.SchemaField("SESION", "INTEGER"),
+                bigquery.SchemaField("DATETIME", "STRING"),
+                bigquery.SchemaField("ITEM", "STRING"),
+                bigquery.SchemaField("INTENTO", "INTEGER"),
+                
+                # New Contextual Columns
+                bigquery.SchemaField("device_category", "STRING"),
+                bigquery.SchemaField("geo_country", "STRING"),
+                bigquery.SchemaField("geo_region", "STRING"),
+                bigquery.SchemaField("geo_city", "STRING"),
+                bigquery.SchemaField("traffic_source", "STRING"),
+                bigquery.SchemaField("traffic_medium", "STRING"),
+
+                # Quantities and IDs
+                bigquery.SchemaField("STATUS", "STRING"),
+                bigquery.SchemaField("CANTIDAD_ADD_TO_CART", "INTEGER"),
+                bigquery.SchemaField("CANTIDAD_BEGIN_CHECKOUT", "INTEGER"),
+                bigquery.SchemaField("CANTIDAD_PURCHASE", "INTEGER"),
+                bigquery.SchemaField("TRANSACTION_ID", "STRING"),
+                bigquery.SchemaField("item_id", "INTEGER"),
+                bigquery.SchemaField("clave_edicion_producto", "INTEGER"),
+
+                # Financials and Dates
+                bigquery.SchemaField("precio_unitario", "FLOAT"),
+                bigquery.SchemaField("fecha_celebracion", "TIMESTAMP"),
+                bigquery.SchemaField("dias_para_sorteo", "FLOAT"),
+                bigquery.SchemaField("MONTO_ADD_TO_CART", "FLOAT"),
+                bigquery.SchemaField("MONTO_BEGIN_CHECKOUT", "FLOAT"),
+                bigquery.SchemaField("MONTO_PURCHASE", "FLOAT"),
+
+                # Patterns - ADD TO CART
+                bigquery.SchemaField("PATRON_ADD_CART", "STRING"),
+                bigquery.SchemaField("PROMOS_ADD_CART_COMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_ADD_CART_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_ADD_CART_TODAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("DESC_ADD_CART_COMPLETAS", "STRING"),
+
+                # Patterns - BEGIN CHECKOUT
+                bigquery.SchemaField("PATRON_BEGIN_CHECKOUT", "STRING"),
+                bigquery.SchemaField("PROMOS_CHECKOUT_COMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_CHECKOUT_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_CHECKOUT_TODAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("DESC_CHECKOUT_COMPLETAS", "STRING"),
+
+                # Patterns - PURCHASE
+                bigquery.SchemaField("PATRON_PURCHASE", "STRING"),
+                bigquery.SchemaField("PROMOS_PURCHASE_COMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_PURCHASE_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_PURCHASE_TODAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("DESC_PURCHASE_COMPLETAS", "STRING"),
+
+                # Summaries
+                bigquery.SchemaField("TIENE_PATRON_COMPLETO", "STRING"),
+                bigquery.SchemaField("TIENE_PATRON_INCOMPLETO", "STRING")
+            ]
+
+            # 1. Extract column names from the schema list in order
+            column_order = [field.name for field in schema_patrones]
+
+            # 2. Reorder the DataFrame (this ensures the CSV/Parquet buffer matches the BQ schema)
+            df_ga4_events_final = df_ga4_events_final[column_order]
+
             logger.info("Cargando df_ga4_events_final a %s", table)
             loader.load_table(
                 df=df_ga4_events_final,
                 destination=table,
-                schema=[],
-            )
+                schema=schema_patrones,
+                )
+            # Fin de Cambios JQL 16Ene26.
 
         # Procesamiento funnel completo
         with _time_block("Procesamiento patrones funnel completo (DDL + SELECT)"):
@@ -811,7 +891,7 @@ def main():
             logger.info(_df_stats(df_patrones_funnel_completo, "df_patrones_funnel_completo"))
 
         # Limpieza ITEM + precios + montos y guardado CSV funnel
-        with _time_block("Limpieza ITEM, inferencia precio_unitario, montos y guardado CSV funnel"):
+        with _time_block("Limpieza ITEM, inferencia precio_unitario, montos"):
             dictCambiosNombre = {
                 "LQ": "Sorteo Lo Quiero",
                 "Sorteo Efectivo": "Efectivo",
@@ -852,10 +932,121 @@ def main():
             df_filtrado_copy['MONTO_PURCHASE'] = (
                 df_filtrado_copy['precio_unitario_inferido'] * df_filtrado_copy['qty_purchase']
             )
-
-            df_filtrado_copy.to_csv(OUTPUT_CSV_FUNNEL, index=False)
-            logger.info("Archivo funnel completo guardado: %s", OUTPUT_CSV_FUNNEL)
             logger.info(_df_stats(df_filtrado_copy, "df_filtrado_copy"))
+
+        # Cambios JQL 16Ene26. Guardar en BD, no en CSV
+        # Carga a BigQuery (tabla df_filtrado_copy)
+        with _time_block("Carga df_filtrado_copy a BigQuery (BQLoad), sin guardar CSV"):
+            loader = BQLoad(credentials_path=CREDENTIALS_PATH_ML)
+            PROJECT_DATASET = "sorteostec-ml.h1"
+            TABLE_NAME = "patrones_funnel_completo__20241001_20251231"
+            table = f"{PROJECT_DATASET}.{TABLE_NAME}"
+
+            # 1. Definir el Schema Final (58 columnas)
+            schema_funnel_completo = [
+                # Identity & Attempt Info
+                bigquery.SchemaField("user_pseudo_id", "STRING"),
+                bigquery.SchemaField("session_id", "INTEGER"),
+                bigquery.SchemaField("intento", "INTEGER"),
+                bigquery.SchemaField("ITEM", "STRING"),
+                bigquery.SchemaField("STATUS", "STRING"),
+                bigquery.SchemaField("attempt_dt_mx", "DATETIME"),
+                bigquery.SchemaField("attempt_date", "DATE"),
+                bigquery.SchemaField("datetime_str", "STRING"),
+                bigquery.SchemaField("TRANSACTION_ID", "STRING"),
+
+                # Contextual Columns
+                bigquery.SchemaField("device_category", "STRING"),
+                bigquery.SchemaField("geo_country", "STRING"),
+                bigquery.SchemaField("geo_region", "STRING"),
+                bigquery.SchemaField("geo_city", "STRING"),
+                bigquery.SchemaField("traffic_source", "STRING"),
+                bigquery.SchemaField("traffic_medium", "STRING"),
+                bigquery.SchemaField("dias_para_sorteo", "FLOAT"),
+
+                # Enrichment Scores
+                bigquery.SchemaField("traffic_density_score", "FLOAT"),
+                bigquery.SchemaField("products_in_session_count", "FLOAT"),
+
+                # Quantities & Financials
+                bigquery.SchemaField("qty_add_to_cart", "FLOAT"),
+                bigquery.SchemaField("qty_begin_checkout", "FLOAT"),
+                bigquery.SchemaField("qty_purchase", "FLOAT"),
+                bigquery.SchemaField("precio_unitario_inferido", "FLOAT"), 
+                bigquery.SchemaField("MONTO_ADD_TO_CART", "FLOAT"),
+                bigquery.SchemaField("MONTO_BEGIN_CHECKOUT", "FLOAT"),
+                bigquery.SchemaField("MONTO_PURCHASE", "FLOAT"),
+
+                # Patterns - ADD TO CART
+                bigquery.SchemaField("PATRON_ADD_CART", "STRING"),
+                bigquery.SchemaField("PROMOS_ADD_CART_COMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_ADD_CART_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_ADD_CART_TODAS", "INTEGER", mode="REPEATED"),
+
+                # Patterns - BEGIN CHECKOUT
+                bigquery.SchemaField("PATRON_BEGIN_CHECKOUT", "STRING"),
+                bigquery.SchemaField("PROMOS_CHECKOUT_COMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_CHECKOUT_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_CHECKOUT_TODAS", "INTEGER", mode="REPEATED"),
+
+                # Patterns - PURCHASE
+                bigquery.SchemaField("PATRON_PURCHASE", "STRING"),
+                bigquery.SchemaField("PROMOS_PURCHASE_COMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_PURCHASE_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                bigquery.SchemaField("PROMOS_PURCHASE_TODAS", "INTEGER", mode="REPEATED"),
+
+                # Session Context
+                bigquery.SchemaField("session_date", "DATE"),
+                bigquery.SchemaField("session_start_mx", "DATETIME"),
+                bigquery.SchemaField("session_end_mx", "DATETIME"),
+                bigquery.SchemaField("login_time_mx", "DATETIME"),
+                bigquery.SchemaField("logout_time_mx", "DATETIME"),
+                bigquery.SchemaField("view_item_list_time_mx", "DATETIME"),
+                bigquery.SchemaField("select_item_time_mx", "DATETIME"),
+                bigquery.SchemaField("add_to_cart_time_mx", "DATETIME"),
+                bigquery.SchemaField("begin_checkout_time_mx", "DATETIME"),
+                bigquery.SchemaField("purchase_time_mx", "DATETIME"),
+                bigquery.SchemaField("sign_up_time_mx", "DATETIME"),
+                bigquery.SchemaField("event_count", "INTEGER"),
+                bigquery.SchemaField("has_purchase", "BOOLEAN"),
+                bigquery.SchemaField("has_sign_up", "BOOLEAN"),
+                bigquery.SchemaField("discount_seen_after_login", "BOOLEAN"),
+                bigquery.SchemaField("categoria_login", "STRING"),
+
+                # Summary Flags
+                bigquery.SchemaField("TIENE_PATRON_COMPLETO", "STRING"),
+                bigquery.SchemaField("TIENE_PATRON_INCOMPLETO", "STRING"),
+                bigquery.SchemaField("ready_at_checkout", "BOOLEAN"),
+                bigquery.SchemaField("ready_at_purchase", "BOOLEAN"),
+                bigquery.SchemaField("login_bucket_bc", "STRING")
+            ]
+
+            # 2. Preparar el DataFrame
+            logger.info("Validando y reordenando columnas...")
+            
+            # Reordenar y filtrar columnas según el schema
+            column_names = [field.name for field in schema_funnel_completo]
+            df_filtrado_copy = df_filtrado_copy[column_names]
+
+            # Asegurar que los campos REPEATED sean listas (no NaN) tras el JOIN en procesamiento_patrones.sql
+            repeated_cols = [f.name for f in schema_funnel_completo if f.mode == "REPEATED"]
+            for col in repeated_cols:
+                df_filtrado_copy[col] = df_filtrado_copy[col].apply(lambda x: x if isinstance(x, list) else [])
+
+            # 3. Ejecutar la carga
+            logger.info("Eliminando tabla destino (si existe): %s", table)
+            loader.delete_tables(table)
+
+            logger.info("Cargando df_filtrado_copy a %s", table)
+            loader.load_table(
+                df=df_filtrado_copy,
+                destination=table,
+                schema=schema_funnel_completo,
+            )
+            logger.info("df_filtrado_copy cargada en %s", table)
+        #df_filtrado_copy.to_csv(OUTPUT_CSV_FUNNEL, index=False)
+        #logger.info("Archivo funnel completo guardado: %s", OUTPUT_CSV_FUNNEL)
+        # Fin de cambios JQL 16Ene26
 
         # Agregar nivel sesión + KPIs
         with _time_block("Agregación nivel sesión + KPIs"):
