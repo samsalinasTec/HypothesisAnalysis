@@ -65,6 +65,23 @@ e AS (
     AND i.event_name IN ('add_to_cart','begin_checkout','purchase')
 ),
  
+-- Cambios JQL 26Ene26. Corregir items duplicados en purchase
+
+-- NUEVO: Deduplicar items dentro del mismo array (mismo timestamp) antes de sumar item_qty
+item_level_dedup AS (
+    SELECT
+      e.*,
+      i.item_name,
+      i.item_id,
+      COALESCE(SAFE_CAST(i.quantity AS INT64), 1) AS raw_item_qty,
+      ROW_NUMBER() OVER (
+        PARTITION BY e.user_pseudo_id, e.event_timestamp, e.event_name, i.item_name, i.item_id
+        ORDER BY e.event_server_timestamp_offset DESC
+      ) AS item_rn
+    FROM e
+    LEFT JOIN UNNEST(e.items) AS i
+),
+ 
 base_raw AS (
     SELECT
       e.user_pseudo_id,
@@ -79,7 +96,7 @@ base_raw AS (
       ) AS transaction_id,
       e.event_bundle_sequence_id,
       e.event_server_timestamp_offset,
-      i.item_name,                                        -- producto/edición
+      e.item_name,                                        -- producto/edición
 
       -- Preservar dimensiones con ANY_VALUE. Cambios JQL 6Ene26
       ANY_VALUE(e.device_category) AS device_category,
@@ -89,10 +106,10 @@ base_raw AS (
       ANY_VALUE(e.traffic_source) AS traffic_source,
       ANY_VALUE(e.traffic_medium) AS traffic_medium,
 
-      -- COALESCE(SAFE_CAST(i.quantity AS INT64), 1) AS item_qty
-      SUM(COALESCE(SAFE_CAST(i.quantity AS INT64), 1)) AS item_qty -- Sumar los boletos del mismo sorteo antes de deduplicar
-    FROM e
-    LEFT JOIN UNNEST(e.items) AS i
+      -- Cambio JQL26Ene26. SUM corregido: suma los boletos únicos del mismo sorteo después de la deduplicación de items
+      SUM(raw_item_qty) AS item_qty 
+    FROM item_level_dedup e
+    WHERE item_rn = 1
     GROUP BY 1,2,3,4,5,6,7,8,9,10 -- Agrupar por todo menos item_qty
   ),
 
@@ -179,11 +196,23 @@ base_raw AS (
       MIN(IF(event_name='purchase', event_dt_mx, NULL)) AS purchase_dt_mx,
       MAX(event_dt_mx)                                  AS last_dt_mx,
       MAX(IF(event_name='purchase',1,0))                AS has_purchase_int,
-      SUM(IF(event_name='add_to_cart', item_qty, 0))    AS qty_add_to_cart,
+      SUM(IF(event_name='add_to_cart', item_qty, 0))    AS raw_qty_add_to_cart, -- Cambios JQL 26Ene26 Alias modificado para lógica de armonización final
       SUM(IF(event_name='purchase',   item_qty, 0))     AS qty_purchase,
       MAX(IF(event_name='purchase', transaction_id, NULL)) AS transaction_id
     FROM bucketed
     GROUP BY 1,2,3,4
+  ),
+
+-- Cambios JQL 26Ene26. Corregir cantidades de begin_checkout y add_to_cart
+
+  -- NUEVO CTE: Preparación para armonización manejando el COALESCE del checkout
+  final_prep AS (
+    SELECT
+      a.*,
+      COALESCE(bc.qty_begin_checkout, 0) AS raw_qty_begin_checkout
+    FROM agg a
+    LEFT JOIN bc_last bc
+      USING (user_pseudo_id, session_id, product_key, attempt_id)
   )
  
 SELECT
@@ -201,7 +230,7 @@ SELECT
   has_purchase_int           AS HAS_PURCHASE_INT,
   CASE WHEN has_purchase_int=1 THEN 'PURCHASED' ELSE 'NO_PURCHASE' END AS STATUS,
 
-    -- Dimensiones añadidas al SELECT final. Cambios JQL 6Ene25
+    -- Dimensiones añadidas al SELECT final. Cambios JQL 6Ene26
   device_category,
   geo_country,
   geo_region,
@@ -209,13 +238,18 @@ SELECT
   traffic_source,
   traffic_medium,
 
-  qty_add_to_cart,
-  COALESCE(bc.qty_begin_checkout, 0)   AS qty_begin_checkout,   -- último BC del intento–producto (suma por evento)
+  -- NUEVO: Lógica de armonización para asegurar que ATC y BC reflejen al menos la cantidad comprada
+  CASE 
+    WHEN qty_purchase > raw_qty_add_to_cart THEN qty_purchase 
+    ELSE raw_qty_add_to_cart 
+  END AS qty_add_to_cart,
+  
+  CASE 
+    WHEN qty_purchase > raw_qty_begin_checkout THEN qty_purchase 
+    ELSE raw_qty_begin_checkout 
+  END AS qty_begin_checkout,
+
   qty_purchase,
  
   transaction_id
-FROM agg
-LEFT JOIN bc_last bc
-
-  USING (user_pseudo_id, session_id, product_key, attempt_id);
-
+FROM final_prep;
