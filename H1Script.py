@@ -8,7 +8,11 @@ import pandas as pd
 from google.cloud import bigquery
 from google.oauth2 import service_account
 from BQLoadClass import BQLoad
-import numpy as np  
+import numpy as np
+
+# Cambios JQL 17Ene26
+import gc
+# Fin de cambios JQL 17Ene26
 
 # ----------------------------
 # Parámetros generales
@@ -628,6 +632,12 @@ def main():
             df_ga4_events_base = df_ga4_events_base.drop('item_completo', axis=1)
             logger.info(_df_stats(df_ga4_events_base, "df_ga4_events_base"))
 
+            # Cambios JQL 17Ene26
+            logger.info("Liberando memoria de df_ga4_events...")
+            del df_ga4_events
+            gc.collect() 
+            # Fin de Cambios JQL 17Ene26
+
         # Condiciones + fechas promo
         with _time_block("Merge df_condiciones con grupo_condicion + fechas_promocion"):
             df_condiciones_base = df_condiciones_base.merge(
@@ -760,6 +770,27 @@ def main():
             df_resultados = df_resultados.set_index('index').sort_index()
 
             df_ga4_events_final = pd.concat([df_ga4_events_base, df_resultados], axis=1)
+
+            # Cambios JQL 17Ene26
+            logger.info("Limpieza post-detección: liberando resultados temporales y base...")
+            
+            # Eliminamos la lista de diccionarios (muy pesada en RAM)
+            del resultados_list 
+            
+            # Eliminamos el DataFrame de resultados intermedio
+            del df_resultados 
+            
+            # Eliminamos la base anterior ya que ya está contenida en 'final'
+            del df_ga4_events_base 
+            
+            # Eliminamos objetos de soporte de reglas que ya no se usarán
+            del df_condiciones_enriquecido
+            
+            gc.collect() 
+            # Fin de Cambios JQL 17Ene26
+
+
+
             logger.info(_df_stats(df_ga4_events_final, "df_ga4_events_final"))
 
         # Columnas resumen
@@ -884,6 +915,12 @@ def main():
                 )
             # Fin de Cambios JQL 16Ene26.
 
+            # Cambios JQL 17Ene26
+            logger.info("Liberando df_ga4_events_final antes del procesamiento SQL...")
+            del df_ga4_events_final
+            gc.collect()
+            # Fin de Cambios JQL 17Ene26
+
         # Procesamiento funnel completo
         with _time_block("Procesamiento patrones funnel completo (DDL + SELECT)"):
             execute_ddl(query_procesamiento_patrones)
@@ -898,6 +935,12 @@ def main():
             }
 
             df_filtrado_copy = df_patrones_funnel_completo.copy()
+
+            # Cambios JQL 17Ene26
+            logger.info("Liberando el dataframe original de funnel (manteniendo solo la copia de trabajo)...")
+            del df_patrones_funnel_completo
+            gc.collect()
+            # Fin de Cambios JQL 17Ene26
 
             df_filtrado_copy["ITEM"] = df_filtrado_copy["ITEM"].apply(mover_numero_al_final)
             df_filtrado_copy["ITEM"] = df_filtrado_copy["ITEM"].apply(
@@ -1183,10 +1226,27 @@ def main():
                         sesiones_login_sin_registrar_con_purchase_con_patron_bc_count)
             logger.info("KPI_sesiones_resumen: %f", KPI_sesiones_resumen)
 
+            # Cambios JQL 17Ene26
+            logger.info("Limpiando objetos de cálculo de KPIs...")
+            del df_sesiones
+            # Las máscaras (mask_login, etc.) son pequeñas, pero borrarlas asegura que no queden referencias.
+            gc.collect()
+            # Fin de Cambios JQL 17Ene26
+
 
         # Análisis promos simples vs combinadas (incompletas/completas)
         with _time_block("Análisis promos simples/combinadas por fila y sesión"):
-            df_flags = df_filtrado_copy.copy()
+            
+            # Cambios JQL 17Ene26 - Usar solo las columnas necesarias
+            # df_flags = df_filtrado_copy.copy()
+            cols_needed = ["user_pseudo_id", "session_id", "PROMOS_ADD_CART_INCOMPLETAS", "PROMOS_ADD_CART_COMPLETAS"]
+            df_flags = df_filtrado_copy[cols_needed].copy()
+            
+            logger.info("df_flags creado solo con columnas necesarias. Eliminando df_filtrado_copy...")
+            del df_filtrado_copy
+            gc.collect()
+            # Fin de Cambios JQL 17Ene26
+
 
             # Flags fila a fila
             df_flags["HAS_SIMPLE_INCOMPLETE"] = df_flags.apply(
