@@ -20,6 +20,9 @@ PROJECT_ID = "sorteostec-ml"
 DATE_START = "2024-10-01" 
 DATE_END   = "2026-01-31" # Extendido a enero 2026
 
+# Control de ejecución
+RUN_DETECTION = False  # Set to False to skip expensive detection if tables already exist
+
 # Generar variantes de fechas para SQLs y Tablas
 start_dt = pd.to_datetime(DATE_START)
 end_dt = pd.to_datetime(DATE_END)
@@ -114,8 +117,9 @@ def load_sql(path: str, **params) -> str:
     sobre el contenido.
     """
     sql_text = Path(path).read_text(encoding="utf-8")
-    if params:
-        sql_text = sql_text.format(**params)
+    # Usamos replace en lugar de format para evitar conflictos con regex (ej: {8}) en SQL
+    for key, value in params.items():
+        sql_text = sql_text.replace(f"{{{key}}}", str(value))
     return sql_text
 
 
@@ -577,6 +581,7 @@ def main():
             logger.info("Ejecutando query_tipo_cantidad_promocion...")
             df_tipo_cantidad = execute_query_to_df(query_tipo_cantidad_promocion)
             logger.info(_df_stats(df_tipo_cantidad, "df_tipo_cantidad"))
+            logger.info(_df_stats(df_tipo_cantidad, "df_tipo_cantidad"))
 
             logger.info("Ejecutando query_grupo_condicion_promocion...")
             df_grupo_condicion = execute_query_to_df(query_grupo_condicion_promocion)
@@ -601,89 +606,91 @@ def main():
             # Convertir fecha_celebracion a datetime
             df_sorteo['fecha_celebracion'] = pd.to_datetime(df_sorteo['fecha_celebracion'])
 
-            # Inicializar copias base para mantener integridad de datos originales
-            df_ga4_events_base = df_ga4_events.copy()
-            df_condiciones_base = df_condiciones.copy()
+            if RUN_DETECTION:
+                # Inicializar copias base para mantener integridad de datos originales
+                df_ga4_events_base = df_ga4_events.copy()
+                df_condiciones_base = df_condiciones.copy()
 
-            # Limpiar nombres de item_name
-            dictCambiosNombre = {
-                "LQ": "Sorteo Lo Quiero",
-                "Sorteo Efectivo": "Efectivo"
-                }
+                # Limpiar nombres de item_name
+                dictCambiosNombre = {
+                    "LQ": "Sorteo Lo Quiero",
+                    "Sorteo Efectivo": "Efectivo"
+                    }
 
-            df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(mover_numero_al_final)
-            df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(
-                 lambda x: reemplazar_prefijo(x, dictCambiosNombre)
-                 )
-            df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(limpiar_item)
+                df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(mover_numero_al_final)
+                df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(
+                     lambda x: reemplazar_prefijo(x, dictCambiosNombre)
+                     )
+                df_ga4_events_base["ITEM"] = df_ga4_events_base["ITEM"].apply(limpiar_item)
 
-            df_ga4_events_base.loc[df_ga4_events_base["ITEM"] == "Gana Ya", "ITEM"] = "Gana Ya 5"
-
-
-            # Merge con sorteo incluyendo la fecha de celebración
-            df_ga4_events_base = df_ga4_events_base.merge(
-                df_sorteo[['item_completo', 'clave_edicion_producto', 'precio_unitario', 'fecha_celebracion']],
-                left_on='ITEM',
-                right_on='item_completo',
-                how='left'
-            )
-
-            # Calcular dias_para_sorteo
-            # Convertimos la fecha del evento a datetime para la operación matemática
-            event_dt = pd.to_datetime(df_ga4_events_base['DATETIME'], format='%d/%m/%Y %H:%M:%S')
-            
-            # Calculamos la diferencia en días enteros
-            df_ga4_events_base['dias_para_sorteo'] = (df_ga4_events_base["fecha_celebracion"].dt.tz_localize(None).dt.normalize() - event_dt.dt.normalize()).dt.days
+                df_ga4_events_base.loc[df_ga4_events_base["ITEM"] == "Gana Ya", "ITEM"] = "Gana Ya 5"
 
 
-            # Procesamiento de montos y tipos de datos
-            df_ga4_events_base['clave_edicion_producto'] = pd.to_numeric(
-                df_ga4_events_base['clave_edicion_producto'], errors='coerce'
-            ).astype('Int64')
+                # Merge con sorteo incluyendo la fecha de celebración
+                df_ga4_events_base = df_ga4_events_base.merge(
+                    df_sorteo[['item_completo', 'clave_edicion_producto', 'precio_unitario', 'fecha_celebracion']],
+                    left_on='ITEM',
+                    right_on='item_completo',
+                    how='left'
+                )
 
-            # Cálculo de montos potenciales (Price * Qty added to cart)
-            df_ga4_events_base['MONTO_ADD_TO_CART'] = (
-                df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_ADD_TO_CART']
-            )
-            
-            # Aseguramos que los montos nulos se manejen como 0 para evitar errores en sumatorias
-            df_ga4_events_base['MONTO_ADD_TO_CART'] = df_ga4_events_base['MONTO_ADD_TO_CART'].fillna(0)
-            
-            # Fin de cambios JQL - 16Ene26
+                # Calcular dias_para_sorteo
+                # Convertimos la fecha del evento a datetime para la operación matemática
+                event_dt = pd.to_datetime(df_ga4_events_base['DATETIME'], format='%d/%m/%Y %H:%M:%S')
+                
+                # Calculamos la diferencia en días enteros
+                df_ga4_events_base['dias_para_sorteo'] = (df_ga4_events_base["fecha_celebracion"].dt.tz_localize(None).dt.normalize() - event_dt.dt.normalize()).dt.days
 
 
-            df_ga4_events_base['MONTO_BEGIN_CHECKOUT'] = (
-                df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_BEGIN_CHECKOUT']
-            )
-            df_ga4_events_base['MONTO_PURCHASE'] = (
-                df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_PURCHASE']
-            )
+                # Procesamiento de montos y tipos de datos
+                df_ga4_events_base['clave_edicion_producto'] = pd.to_numeric(
+                    df_ga4_events_base['clave_edicion_producto'], errors='coerce'
+                ).astype('Int64')
 
-            df_ga4_events_base = df_ga4_events_base.drop('item_completo', axis=1)
-            logger.info(_df_stats(df_ga4_events_base, "df_ga4_events_base"))
+                # Cálculo de montos potenciales (Price * Qty added to cart)
+                df_ga4_events_base['MONTO_ADD_TO_CART'] = (
+                    df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_ADD_TO_CART']
+                )
+                
+                # Aseguramos que los montos nulos se manejen como 0 para evitar errores en sumatorias
+                df_ga4_events_base['MONTO_ADD_TO_CART'] = df_ga4_events_base['MONTO_ADD_TO_CART'].fillna(0)
+                
+                # Fin de cambios JQL - 16Ene26
+
+
+                df_ga4_events_base['MONTO_BEGIN_CHECKOUT'] = (
+                    df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_BEGIN_CHECKOUT']
+                )
+                df_ga4_events_base['MONTO_PURCHASE'] = (
+                    df_ga4_events_base['precio_unitario'] * df_ga4_events_base['CANTIDAD_PURCHASE']
+                )
+
+                df_ga4_events_base = df_ga4_events_base.drop('item_completo', axis=1)
+                logger.info(_df_stats(df_ga4_events_base, "df_ga4_events_base"))
 
         # Condiciones + fechas promo
-        with _time_block("Merge df_condiciones con grupo_condicion + fechas_promocion"):
-            df_condiciones_base = df_condiciones_base.merge(
-                df_grupo_condicion[['clave_grupo_condiciones', 'clave_promocion']],
-                on='clave_grupo_condiciones',
-                how='left'
-            )
+        if RUN_DETECTION:
+            with _time_block("Merge df_condiciones con grupo_condicion + fechas_promocion"):
+                df_condiciones_base = df_condiciones_base.merge(
+                    df_grupo_condicion[['clave_grupo_condiciones', 'clave_promocion']],
+                    on='clave_grupo_condiciones',
+                    how='left'
+                )
 
-            df_condiciones_base = df_condiciones_base.merge(
-                df_fechas_promocion[['clave_promocion', 'd_inicio_promocion', 'd_cierre_promocion']],
-                on='clave_promocion',
-                how='left'
-            )
+                df_condiciones_base = df_condiciones_base.merge(
+                    df_fechas_promocion[['clave_promocion', 'd_inicio_promocion', 'd_cierre_promocion']],
+                    on='clave_promocion',
+                    how='left'
+                )
 
-            total = len(df_condiciones_base)
-            con_fechas = df_condiciones_base['d_inicio_promocion'].notna().sum()
-            sin_fechas = df_condiciones_base['d_inicio_promocion'].isna().sum()
+                total = len(df_condiciones_base)
+                con_fechas = df_condiciones_base['d_inicio_promocion'].notna().sum()
+                sin_fechas = df_condiciones_base['d_inicio_promocion'].isna().sum()
 
-            logger.info("=== RESUMEN CONDICIONES ===")
-            logger.info("Total de filas: %d", total)
-            logger.info("Condiciones con fechas: %d", con_fechas)
-            logger.info("Condiciones sin fechas: %d", sin_fechas)
+                logger.info("=== RESUMEN CONDICIONES ===")
+                logger.info("Total de filas: %d", total)
+                logger.info("Condiciones con fechas: %d", con_fechas)
+                logger.info("Condiciones sin fechas: %d", sin_fechas)
 
         # Promos combinadas
         with _time_block("Normalización de promociones combinadas + vigencia_promo"):
@@ -739,184 +746,186 @@ def main():
             logger.info("Promociones multi-producto detectadas: %d", len(promos_multi))
 
         # Enriquecer condiciones con interpretación
-        with _time_block("Enriquecimiento df_condiciones_enriquecido"):
-            df_condiciones_enriquecido = df_condiciones_base.merge(
-                df_tipo_cantidad[['clave_tipo_cantidad_condicion', 'descripcion']],
-                on='clave_tipo_cantidad_condicion',
-                how='left'
-            )
-
-            df_condiciones_enriquecido['interpretacion'] = df_condiciones_enriquecido.apply(
-                interpretar_cantidad, axis=1
-            )
-
-            df_condiciones_enriquecido['d_inicio_promocion'] = pd.to_datetime(
-                df_condiciones_enriquecido['d_inicio_promocion']
-            )
-            df_condiciones_enriquecido['d_cierre_promocion'] = pd.to_datetime(
-                df_condiciones_enriquecido['d_cierre_promocion']
-            )
-
-            logger.info("Condiciones enriquecidas: %d", len(df_condiciones_enriquecido))
-
-        # Detección de patrones con evaluación por sesión
-        with _time_block("Detección de patrones (por sesión y producto)"):
-            logger.info("Detectando patrones con validación completa (con combinadas V1)...")
-            sesiones = df_ga4_events_base.groupby(['USER', 'SESION'])
-            total_sesiones = len(sesiones)
-            logger.info("Total sesiones: %d", total_sesiones)
-
-            resultados_list = []
-            for idx_sesion, ((user, sesion), df_sesion) in enumerate(sesiones, start=1):
-                if idx_sesion % 1000 == 0:
-                    logger.info("Progreso sesiones: %d / %d (%.1f%%)",
-                                idx_sesion, total_sesiones, 100 * idx_sesion / total_sesiones)
-
-                promociones_completas_sesion = evaluar_promociones_sesion(
-                    df_sesion=df_sesion,
-                    requisitos_multi=requisitos_multi,
-                    vigencia_promo=vigencia_promo
+        if RUN_DETECTION:
+            with _time_block("Enriquecimiento df_condiciones_enriquecido"):
+                df_condiciones_enriquecido = df_condiciones_base.merge(
+                    df_tipo_cantidad[['clave_tipo_cantidad_condicion', 'descripcion']],
+                    on='clave_tipo_cantidad_condicion',
+                    how='left'
                 )
 
-                for idx_row, row in df_sesion.iterrows():
-                    resultado = detectar_patrones_producto(
-                        row=row,
-                        condiciones_df=df_condiciones_enriquecido,
-                        promociones_completas_sesion=promociones_completas_sesion,
-                        promos_multi=promos_multi,
+                df_condiciones_enriquecido['interpretacion'] = df_condiciones_enriquecido.apply(
+                    interpretar_cantidad, axis=1
+                )
+
+                df_condiciones_enriquecido['d_inicio_promocion'] = pd.to_datetime(
+                    df_condiciones_enriquecido['d_inicio_promocion']
+                )
+                df_condiciones_enriquecido['d_cierre_promocion'] = pd.to_datetime(
+                    df_condiciones_enriquecido['d_cierre_promocion']
+                )
+
+                logger.info("Condiciones enriquecidas: %d", len(df_condiciones_enriquecido))
+
+        # Detección de patrones con evaluación por sesión
+        if RUN_DETECTION:
+            with _time_block("Detección de patrones (por sesión y producto)"):
+                logger.info("Detectando patrones con validación completa (con combinadas V1)...")
+                sesiones = df_ga4_events_base.groupby(['USER', 'SESION'])
+                total_sesiones = len(sesiones)
+                logger.info("Total sesiones: %d", total_sesiones)
+
+                resultados_list = []
+                for idx_sesion, ((user, sesion), df_sesion) in enumerate(sesiones, start=1):
+                    if idx_sesion % 1000 == 0:
+                        logger.info("Progreso sesiones: %d / %d (%.1f%%)",
+                                    idx_sesion, total_sesiones, 100 * idx_sesion / total_sesiones)
+
+                    promociones_completas_sesion = evaluar_promociones_sesion(
+                        df_sesion=df_sesion,
                         requisitos_multi=requisitos_multi,
                         vigencia_promo=vigencia_promo
                     )
-                    resultado['index'] = idx_row
-                    resultados_list.append(resultado)
 
-            df_resultados = pd.DataFrame(resultados_list)
-            df_resultados = df_resultados.set_index('index').sort_index()
+                    for idx_row, row in df_sesion.iterrows():
+                        resultado = detectar_patrones_producto(
+                            row=row,
+                            condiciones_df=df_condiciones_enriquecido,
+                            promociones_completas_sesion=promociones_completas_sesion,
+                            promos_multi=promos_multi,
+                            requisitos_multi=requisitos_multi,
+                            vigencia_promo=vigencia_promo
+                        )
+                        resultado['index'] = idx_row
+                        resultados_list.append(resultado)
 
-            df_ga4_events_final = pd.concat([df_ga4_events_base, df_resultados], axis=1)
-            logger.info(_df_stats(df_ga4_events_final, "df_ga4_events_final"))
+                df_resultados = pd.DataFrame(resultados_list)
+                df_resultados = df_resultados.set_index('index').sort_index()
 
-        # Columnas resumen
-        with _time_block("Cálculo columnas resumen patrón completo / incompleto"):
-            df_ga4_events_final['TIENE_PATRON_COMPLETO'] = df_ga4_events_final.apply(
-                lambda row: 'SI' if (row['PATRON_ADD_CART'] == 'SI' or
-                                     row['PATRON_BEGIN_CHECKOUT'] == 'SI' or
-                                     row['PATRON_PURCHASE'] == 'SI') else 'NO',
-                axis=1
-            )
+                df_ga4_events_final = pd.concat([df_ga4_events_base, df_resultados], axis=1)
+                logger.info(_df_stats(df_ga4_events_final, "df_ga4_events_final"))
 
-            df_ga4_events_final['TIENE_PATRON_INCOMPLETO'] = df_ga4_events_final.apply(
-                lambda row: 'SI' if (len(row['PROMOS_ADD_CART_INCOMPLETAS']) > 0 or
-                                     len(row['PROMOS_CHECKOUT_INCOMPLETAS']) > 0 or
-                                     len(row['PROMOS_PURCHASE_INCOMPLETAS']) > 0) else 'NO',
-                axis=1
-            )
-
-            logger.info("=== RESUMEN GENERAL ===")
-            total_filas = len(df_ga4_events_final)
-            completos = len(df_ga4_events_final[df_ga4_events_final['TIENE_PATRON_COMPLETO'] == 'SI'])
-            incompletos = len(df_ga4_events_final[df_ga4_events_final['TIENE_PATRON_INCOMPLETO'] == 'SI'])
-            logger.info("Total de filas analizadas: %d", total_filas)
-            logger.info("Filas con patrón COMPLETO: %d", completos)
-            logger.info("Filas con patrón INCOMPLETO: %d", incompletos)
-
-            logger.info("=== PATRONES COMPLETOS POR ETAPA ===")
-            add_comp = len(df_ga4_events_final[df_ga4_events_final['PATRON_ADD_CART'] == 'SI'])
-            bc_comp = len(df_ga4_events_final[df_ga4_events_final['PATRON_BEGIN_CHECKOUT'] == 'SI'])
-            pur_comp = len(df_ga4_events_final[df_ga4_events_final['PATRON_PURCHASE'] == 'SI'])
-            logger.info("ADD_TO_CART completo: %d", add_comp)
-            logger.info("BEGIN_CHECKOUT completo: %d", bc_comp)
-            logger.info("PURCHASE completo: %d", pur_comp)
-
-        # Análisis multi-producto y guardado CSV patrones_promociones
-        with _time_block("Análisis multi-producto + guardado CSV patrones_promociones"):
-
-            df_ga4_events_final.to_csv(OUTPUT_CSV_PROMOS, index=False)
-            logger.info("Archivo guardado: %s", OUTPUT_CSV_PROMOS)
-
-
-        # Carga a BigQuery (tabla patrones_promociones)
-        with _time_block("Carga df_ga4_events_final a BigQuery (BQLoad)"):
-            loader = BQLoad(credentials_path=CREDENTIALS_PATH_ML)
-            PROJECT_DATASET = "sorteostec-ml.h1"
-            TABLE_NAME = f"ga4_patrones_promociones_{TABLE_SUFFIX}"
-            table = f"{PROJECT_DATASET}.{TABLE_NAME}"
-
-            logger.info("Eliminando tabla destino (si existe): %s", table)
-            loader.delete_tables(table)
-
-            # Cambios JQL 16Ene26. Definir esquema
-            schema_patrones = [
-                bigquery.SchemaField("USER", "STRING"),
-                bigquery.SchemaField("SESION", "INTEGER"),
-                bigquery.SchemaField("DATETIME", "STRING"),
-                bigquery.SchemaField("ITEM", "STRING"),
-                bigquery.SchemaField("INTENTO", "INTEGER"),
-                
-                # New Contextual Columns
-                bigquery.SchemaField("device_category", "STRING"),
-                bigquery.SchemaField("geo_country", "STRING"),
-                bigquery.SchemaField("geo_region", "STRING"),
-                bigquery.SchemaField("geo_city", "STRING"),
-                bigquery.SchemaField("traffic_source", "STRING"),
-                bigquery.SchemaField("traffic_medium", "STRING"),
-
-                # Quantities and IDs
-                bigquery.SchemaField("STATUS", "STRING"),
-                bigquery.SchemaField("CANTIDAD_ADD_TO_CART", "INTEGER"),
-                bigquery.SchemaField("CANTIDAD_BEGIN_CHECKOUT", "INTEGER"),
-                bigquery.SchemaField("CANTIDAD_PURCHASE", "INTEGER"),
-                bigquery.SchemaField("TRANSACTION_ID", "STRING"),
-                bigquery.SchemaField("item_id", "INTEGER"),
-                bigquery.SchemaField("clave_edicion_producto", "INTEGER"),
-
-                # Financials and Dates
-                bigquery.SchemaField("precio_unitario", "FLOAT"),
-                bigquery.SchemaField("fecha_celebracion", "TIMESTAMP"),
-                bigquery.SchemaField("dias_para_sorteo", "FLOAT"),
-                bigquery.SchemaField("MONTO_ADD_TO_CART", "FLOAT"),
-                bigquery.SchemaField("MONTO_BEGIN_CHECKOUT", "FLOAT"),
-                bigquery.SchemaField("MONTO_PURCHASE", "FLOAT"),
-
-                # Patterns - ADD TO CART
-                bigquery.SchemaField("PATRON_ADD_CART", "STRING"),
-                bigquery.SchemaField("PROMOS_ADD_CART_COMPLETAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("PROMOS_ADD_CART_INCOMPLETAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("PROMOS_ADD_CART_TODAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("DESC_ADD_CART_COMPLETAS", "STRING"),
-
-                # Patterns - BEGIN CHECKOUT
-                bigquery.SchemaField("PATRON_BEGIN_CHECKOUT", "STRING"),
-                bigquery.SchemaField("PROMOS_CHECKOUT_COMPLETAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("PROMOS_CHECKOUT_INCOMPLETAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("PROMOS_CHECKOUT_TODAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("DESC_CHECKOUT_COMPLETAS", "STRING"),
-
-                # Patterns - PURCHASE
-                bigquery.SchemaField("PATRON_PURCHASE", "STRING"),
-                bigquery.SchemaField("PROMOS_PURCHASE_COMPLETAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("PROMOS_PURCHASE_INCOMPLETAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("PROMOS_PURCHASE_TODAS", "INTEGER", mode="REPEATED"),
-                bigquery.SchemaField("DESC_PURCHASE_COMPLETAS", "STRING"),
-
-                # Summaries
-                bigquery.SchemaField("TIENE_PATRON_COMPLETO", "STRING"),
-                bigquery.SchemaField("TIENE_PATRON_INCOMPLETO", "STRING")
-            ]
-
-            # 1. Extract column names from the schema list in order
-            column_order = [field.name for field in schema_patrones]
-
-            # 2. Reorder the DataFrame (this ensures the CSV/Parquet buffer matches the BQ schema)
-            df_ga4_events_final = df_ga4_events_final[column_order]
-
-            logger.info("Cargando df_ga4_events_final a %s", table)
-            loader.load_table(
-                df=df_ga4_events_final,
-                destination=table,
-                schema=schema_patrones,
+            # Columnas resumen
+            with _time_block("Cálculo columnas resumen patrón completo / incompleto"):
+                df_ga4_events_final['TIENE_PATRON_COMPLETO'] = df_ga4_events_final.apply(
+                    lambda row: 'SI' if (row['PATRON_ADD_CART'] == 'SI' or
+                                         row['PATRON_BEGIN_CHECKOUT'] == 'SI' or
+                                         row['PATRON_PURCHASE'] == 'SI') else 'NO',
+                    axis=1
                 )
-            # Fin de Cambios JQL 16Ene26.
+
+                df_ga4_events_final['TIENE_PATRON_INCOMPLETO'] = df_ga4_events_final.apply(
+                    lambda row: 'SI' if (len(row['PROMOS_ADD_CART_INCOMPLETAS']) > 0 or
+                                         len(row['PROMOS_CHECKOUT_INCOMPLETAS']) > 0 or
+                                         len(row['PROMOS_PURCHASE_INCOMPLETAS']) > 0) else 'NO',
+                    axis=1
+                )
+
+                logger.info("=== RESUMEN GENERAL ===")
+                total_filas = len(df_ga4_events_final)
+                completos = len(df_ga4_events_final[df_ga4_events_final['TIENE_PATRON_COMPLETO'] == 'SI'])
+                incompletos = len(df_ga4_events_final[df_ga4_events_final['TIENE_PATRON_INCOMPLETO'] == 'SI'])
+                logger.info("Total de filas analizadas: %d", total_filas)
+                logger.info("Filas con patrón COMPLETO: %d", completos)
+                logger.info("Filas con patrón INCOMPLETO: %d", incompletos)
+
+                logger.info("=== PATRONES COMPLETOS POR ETAPA ===")
+                add_comp = len(df_ga4_events_final[df_ga4_events_final['PATRON_ADD_CART'] == 'SI'])
+                bc_comp = len(df_ga4_events_final[df_ga4_events_final['PATRON_BEGIN_CHECKOUT'] == 'SI'])
+                pur_comp = len(df_ga4_events_final[df_ga4_events_final['PATRON_PURCHASE'] == 'SI'])
+                logger.info("ADD_TO_CART completo: %d", add_comp)
+                logger.info("BEGIN_CHECKOUT completo: %d", bc_comp)
+                logger.info("PURCHASE completo: %d", pur_comp)
+
+            # Análisis multi-producto y guardado CSV patrones_promociones
+            with _time_block("Análisis multi-producto + guardado CSV patrones_promociones"):
+
+                df_ga4_events_final.to_csv(OUTPUT_CSV_PROMOS, index=False)
+                logger.info("Archivo guardado: %s", OUTPUT_CSV_PROMOS)
+
+
+            # Carga a BigQuery (tabla patrones_promociones)
+            with _time_block("Carga df_ga4_events_final a BigQuery (BQLoad)"):
+                loader = BQLoad(credentials_path=CREDENTIALS_PATH_ML)
+                PROJECT_DATASET = "sorteostec-ml.h1"
+                TABLE_NAME = f"ga4_patrones_promociones_{TABLE_SUFFIX}"
+                table = f"{PROJECT_DATASET}.{TABLE_NAME}"
+
+                logger.info("Eliminando tabla destino (si existe): %s", table)
+                loader.delete_tables(table)
+
+                # Cambios JQL 16Ene26. Definir esquema
+                schema_patrones = [
+                    bigquery.SchemaField("USER", "STRING"),
+                    bigquery.SchemaField("SESION", "INTEGER"),
+                    bigquery.SchemaField("DATETIME", "STRING"),
+                    bigquery.SchemaField("ITEM", "STRING"),
+                    bigquery.SchemaField("INTENTO", "INTEGER"),
+                    
+                    # New Contextual Columns
+                    bigquery.SchemaField("device_category", "STRING"),
+                    bigquery.SchemaField("geo_country", "STRING"),
+                    bigquery.SchemaField("geo_region", "STRING"),
+                    bigquery.SchemaField("geo_city", "STRING"),
+                    bigquery.SchemaField("traffic_source", "STRING"),
+                    bigquery.SchemaField("traffic_medium", "STRING"),
+
+                    # Quantities and IDs
+                    bigquery.SchemaField("STATUS", "STRING"),
+                    bigquery.SchemaField("CANTIDAD_ADD_TO_CART", "INTEGER"),
+                    bigquery.SchemaField("CANTIDAD_BEGIN_CHECKOUT", "INTEGER"),
+                    bigquery.SchemaField("CANTIDAD_PURCHASE", "INTEGER"),
+                    bigquery.SchemaField("TRANSACTION_ID", "STRING"),
+                    bigquery.SchemaField("item_id", "INTEGER"),
+                    bigquery.SchemaField("clave_edicion_producto", "INTEGER"),
+
+                    # Financials and Dates
+                    bigquery.SchemaField("precio_unitario", "FLOAT"),
+                    bigquery.SchemaField("fecha_celebracion", "TIMESTAMP"),
+                    bigquery.SchemaField("dias_para_sorteo", "FLOAT"),
+                    bigquery.SchemaField("MONTO_ADD_TO_CART", "FLOAT"),
+                    bigquery.SchemaField("MONTO_BEGIN_CHECKOUT", "FLOAT"),
+                    bigquery.SchemaField("MONTO_PURCHASE", "FLOAT"),
+
+                    # Patterns - ADD TO CART
+                    bigquery.SchemaField("PATRON_ADD_CART", "STRING"),
+                    bigquery.SchemaField("PROMOS_ADD_CART_COMPLETAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("PROMOS_ADD_CART_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("PROMOS_ADD_CART_TODAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("DESC_ADD_CART_COMPLETAS", "STRING"),
+
+                    # Patterns - BEGIN CHECKOUT
+                    bigquery.SchemaField("PATRON_BEGIN_CHECKOUT", "STRING"),
+                    bigquery.SchemaField("PROMOS_CHECKOUT_COMPLETAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("PROMOS_CHECKOUT_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("PROMOS_CHECKOUT_TODAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("DESC_CHECKOUT_COMPLETAS", "STRING"),
+
+                    # Patterns - PURCHASE
+                    bigquery.SchemaField("PATRON_PURCHASE", "STRING"),
+                    bigquery.SchemaField("PROMOS_PURCHASE_COMPLETAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("PROMOS_PURCHASE_INCOMPLETAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("PROMOS_PURCHASE_TODAS", "INTEGER", mode="REPEATED"),
+                    bigquery.SchemaField("DESC_PURCHASE_COMPLETAS", "STRING"),
+
+                    # Summaries
+                    bigquery.SchemaField("TIENE_PATRON_COMPLETO", "STRING"),
+                    bigquery.SchemaField("TIENE_PATRON_INCOMPLETO", "STRING")
+                ]
+
+                # 1. Extract column names from the schema list in order
+                column_order = [field.name for field in schema_patrones]
+
+                # 2. Reorder the DataFrame (this ensures the CSV/Parquet buffer matches the BQ schema)
+                df_ga4_events_final = df_ga4_events_final[column_order]
+
+                logger.info("Cargando df_ga4_events_final a %s", table)
+                loader.load_table(
+                    df=df_ga4_events_final,
+                    destination=table,
+                    schema=schema_patrones,
+                    )
+                # Fin de Cambios JQL 16Ene26.
 
         # Procesamiento funnel completo
         with _time_block("Procesamiento patrones funnel completo (DDL + SELECT)"):
@@ -1065,7 +1074,10 @@ def main():
             # Asegurar que los campos REPEATED sean listas (no NaN) tras el JOIN en procesamiento_patrones.sql
             repeated_cols = [f.name for f in schema_funnel_completo if f.mode == "REPEATED"]
             for col in repeated_cols:
-                df_filtrado_copy[col] = df_filtrado_copy[col].apply(lambda x: x if isinstance(x, list) else [])
+                # Fix: Check for list or np.ndarray, and convert to list if needed
+                df_filtrado_copy[col] = df_filtrado_copy[col].apply(
+                    lambda x: list(x) if isinstance(x, (list, np.ndarray)) else []
+                )
 
             # 3. Ejecutar la carga
             logger.info("Eliminando tabla destino (si existe): %s", table)
