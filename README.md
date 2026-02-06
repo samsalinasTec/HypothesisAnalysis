@@ -113,7 +113,7 @@ Data/CSV/
 ### Tablas BigQuery
 ```sql
 -- Tabla principal de análisis
-sorteostec-ml.h1.patrones_y_funnel_web_20241201_20251130
+sorteostec-ml.h1.patrones_y_funnel_web_{YYYYMMDD}_{YYYYMMDD}
 
 -- Campos clave:
 ├── Identificadores: user_pseudo_id, session_id, ITEM
@@ -188,8 +188,9 @@ grep "FIN EXITOSO" logs/h1Logs.log
 ### Actualización de Período
 ```python
 # En H1Script.py y H1ShortScript.py
-DATE_START = "2025-01-01"  # Nueva fecha
-DATE_END = "2025-12-31"
+# En H1Script.py
+DATE_START = "2024-10-01"  
+DATE_END   = "2026-01-31"  # Actualizar fecha fin. El sufijo de tablas se calcula automático.
 ```
 
 ### Performance
@@ -214,4 +215,4 @@ DATE_END = "2025-12-31"
 
 
 *Desarrollado por el equipo de Data Science/analytics - SorteosTec*  
-*Última actualización: Diciembre 2025*
+*Última actualización: Febrero 2026*

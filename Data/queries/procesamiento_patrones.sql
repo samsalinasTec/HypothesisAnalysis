@@ -1,4 +1,4 @@
-CREATE OR REPLACE TABLE `sorteostec-ml.h1.patrones_y_funnel_web_20241001_20251231` 
+CREATE OR REPLACE TABLE `sorteostec-ml.h1.patrones_y_funnel_web_{table_suffix}` 
 PARTITION BY attempt_date
 CLUSTER BY ITEM, STATUS, login_bucket_bc AS
 
@@ -17,7 +17,7 @@ WITH t AS (
     SAFE_CAST(CANTIDAD_PURCHASE       AS INT64) AS qty_purchase,
     TRANSACTION_ID,
 
-    -- Cambios JQL 16Ene26. Arrastrar nuevos campos creados en ga4_patrones_promociones_20241001_20251231
+    -- Cambios JQL 16Ene26. Arrastrar nuevos campos creados en ga4_patrones_promociones_{table_suffix}
     -- y crear traffic_density_score y products_in_session_count
     device_category,
     geo_country,
@@ -40,9 +40,9 @@ WITH t AS (
     PROMOS_PURCHASE_COMPLETAS, PROMOS_PURCHASE_INCOMPLETAS, PROMOS_PURCHASE_TODAS,
     PATRON_ADD_CART, PATRON_BEGIN_CHECKOUT, PATRON_PURCHASE,
     TIENE_PATRON_COMPLETO, TIENE_PATRON_INCOMPLETO
-  FROM `sorteostec-ml.h1.ga4_patrones_promociones_20241001_20251231`
+  FROM `sorteostec-ml.h1.ga4_patrones_promociones_{table_suffix}`
   WHERE PARSE_DATE('%d/%m/%Y', SUBSTR(DATETIME,1,10))
-        BETWEEN DATE '2024-10-01' AND DATE '2025-12-31'
+        BETWEEN DATE '{start_date_dash}' AND DATE '{end_date_dash}'
 ),
 s AS (
   SELECT
@@ -54,8 +54,8 @@ s AS (
     sign_up_time_mx,
     event_count, has_purchase, has_sign_up,
     discount_seen_after_login, categoria_login
-  FROM `sorteostec-ml.h1.sesiones_funnel_lineal_web_20241001_20251231`
-  WHERE session_date BETWEEN DATE '2024-10-01' AND DATE '2025-12-31'
+  FROM `sorteostec-ml.h1.sesiones_funnel_lineal_web_{table_suffix}`
+  WHERE session_date BETWEEN DATE '{start_date_dash}' AND DATE '{end_date_dash}'
 )
 SELECT
   -- claves intento–producto

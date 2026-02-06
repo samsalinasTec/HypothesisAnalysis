@@ -14,11 +14,27 @@ import numpy as np
 # Parámetros generales
 # ----------------------------
 PROJECT_ID = "sorteostec-ml"
-DATE_START = "2024-10-01" # 
-DATE_END   = "2025-12-31"
+
+# Cambios Analisis Continuo: Parametrización de fechas
+# Definir fechas de análisis
+DATE_START = "2024-10-01" 
+DATE_END   = "2026-01-31" # Extendido a enero 2026
+
+# Generar variantes de fechas para SQLs y Tablas
+start_dt = pd.to_datetime(DATE_START)
+end_dt = pd.to_datetime(DATE_END)
+
+start_date_nodash = start_dt.strftime('%Y%m%d')
+end_date_nodash = end_dt.strftime('%Y%m%d')
+start_date_dash = DATE_START
+end_date_dash = DATE_END
+
+# Sufijo estándar para las tablas
+TABLE_SUFFIX = f"{start_date_nodash}_{end_date_nodash}"
 
 # Tabla base GA4 (canónica por PRODUCTO, no por boleto)
-TABLE_B = "sorteostec-ml.h1.intentos_producto_canonico_web_20241001_20251231"
+# sorteostec-ml.h1.intentos_producto_canonico_web_YYYYMMDD_YYYYMMDD
+TABLE_B = f"sorteostec-ml.h1.intentos_producto_canonico_web_{TABLE_SUFFIX}"
 
 # Solo se usa en script de VM. Aquí no se deposita ninguna tabla en ningun lado fuera de local.
 # Solo son pruebas locales.
@@ -500,7 +516,12 @@ def main():
 
         # Cargar queries
         with _time_block("Carga de archivos SQL"):
-            query_base_patrones = load_sql("./Data/queries/base_patrones.sql")
+            query_base_patrones = load_sql(
+                "./Data/queries/base_patrones.sql",
+                table_suffix=TABLE_SUFFIX,
+                start_date_nodash=start_date_nodash,
+                end_date_nodash=end_date_nodash
+            )
 
             query_ga4_events = load_sql(
                 "./Data/queries/ga4_events.sql",
@@ -514,9 +535,22 @@ def main():
             query_grupo_condicion_promocion = load_sql("./Data/queries/grupo_condicion_promocion.sql")
             query_catalogo_promociones_fechas = load_sql("./Data/queries/catalogo_promociones_fechas.sql")
             query_promociones_combinadas = load_sql("./Data/queries/promociones_combinadas.sql")
-            query_complemento_funnel = load_sql("./Data/queries/complemento_funnel.sql")
-            query_procesamiento_patrones = load_sql("./Data/queries/procesamiento_patrones.sql")
-            query_patrones_funnel_completo = load_sql("./Data/queries/patrones_funnel_completo.sql")
+            query_complemento_funnel = load_sql(
+                "./Data/queries/complemento_funnel.sql",
+                start_date_nodash=start_date_nodash,
+                end_date_nodash=end_date_nodash,
+                table_suffix=TABLE_SUFFIX
+            )
+            query_procesamiento_patrones = load_sql(
+                "./Data/queries/procesamiento_patrones.sql",
+                table_suffix=TABLE_SUFFIX,
+                start_date_dash=start_date_dash,
+                end_date_dash=end_date_dash
+            )
+            query_patrones_funnel_completo = load_sql(
+                "./Data/queries/patrones_funnel_completo.sql",
+                table_suffix=TABLE_SUFFIX
+            )
 
 
 
@@ -805,7 +839,7 @@ def main():
         with _time_block("Carga df_ga4_events_final a BigQuery (BQLoad)"):
             loader = BQLoad(credentials_path=CREDENTIALS_PATH_ML)
             PROJECT_DATASET = "sorteostec-ml.h1"
-            TABLE_NAME = "ga4_patrones_promociones_20241001_20251231"
+            TABLE_NAME = f"ga4_patrones_promociones_{TABLE_SUFFIX}"
             table = f"{PROJECT_DATASET}.{TABLE_NAME}"
 
             logger.info("Eliminando tabla destino (si existe): %s", table)
@@ -939,7 +973,7 @@ def main():
         with _time_block("Carga df_filtrado_copy a BigQuery (BQLoad), sin guardar CSV"):
             loader = BQLoad(credentials_path=CREDENTIALS_PATH_ML)
             PROJECT_DATASET = "sorteostec-ml.h1"
-            TABLE_NAME = "patrones_funnel_completo__20241001_20251231"
+            TABLE_NAME = f"patrones_funnel_completo__{TABLE_SUFFIX}"
             table = f"{PROJECT_DATASET}.{TABLE_NAME}"
 
             # 1. Definir el Schema Final (58 columnas)
@@ -1035,9 +1069,11 @@ def main():
 
             # 3. Ejecutar la carga
             logger.info("Eliminando tabla destino (si existe): %s", table)
-            loader.delete_tables(table)
+            #loader.delete_tables(table)
 
             logger.info("Cargando df_filtrado_copy a %s", table)
+
+            #TODO: Si la tabla no existe, solamente cargar y no DELETE la tabla.
             loader.load_table(
                 df=df_filtrado_copy,
                 destination=table,

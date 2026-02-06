@@ -1,4 +1,4 @@
-CREATE OR REPLACE TABLE `sorteostec-ml.h1.sesiones_funnel_lineal_web_20241001_20251231`
+CREATE OR REPLACE TABLE `sorteostec-ml.h1.sesiones_funnel_lineal_web_{table_suffix}`
 PARTITION BY session_date
 CLUSTER BY user_pseudo_id, session_id
 AS
@@ -9,7 +9,7 @@ events_days AS (
     REGEXP_EXTRACT(table_name, r'^events_(\d{8})$') AS ds
   FROM `sorteostec-analytics360.analytics_277858205.INFORMATION_SCHEMA.TABLES`
   WHERE REGEXP_CONTAINS(table_name, r'^events_\d{8}$')
-    AND REGEXP_EXTRACT(table_name, r'^events_(\d{8})$') BETWEEN '20241001' AND '20251231'
+    AND REGEXP_EXTRACT(table_name, r'^events_(\d{8})$') BETWEEN '{start_date_nodash}' AND '{end_date_nodash}'
 ),
  
 -- 1) Fuente unificada (events + intraday sin duplicar por día)
@@ -26,7 +26,7 @@ e AS (
     platform
   FROM `sorteostec-analytics360.analytics_277858205.events_*`
   WHERE REGEXP_CONTAINS(_TABLE_SUFFIX, r'^\d{8}$')
-    AND _TABLE_SUFFIX BETWEEN '20241001' AND '20251231'
+    AND _TABLE_SUFFIX BETWEEN '{start_date_nodash}' AND '{end_date_nodash}'
     AND platform = 'WEB'
     AND EXISTS (SELECT 1 FROM UNNEST(event_params) WHERE key = 'ga_session_id')
     AND event_name IN (
@@ -47,7 +47,7 @@ e AS (
     i.items,
     i.platform
   FROM `sorteostec-analytics360.analytics_277858205.events_intraday_*` i
-  WHERE i._TABLE_SUFFIX BETWEEN '20241001' AND '20251231'
+  WHERE i._TABLE_SUFFIX BETWEEN '{start_date_nodash}' AND '{end_date_nodash}'
     AND NOT EXISTS (
       SELECT 1 FROM events_days d
       WHERE d.ds = i._TABLE_SUFFIX
